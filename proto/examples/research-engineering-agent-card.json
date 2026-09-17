@@ -1,0 +1,48 @@
+{
+  "name": "Research Engineering Agent",
+  "description": "Investigates emerging technologies and solves difficult engineering problems.",
+  "supportedInterfaces": [
+    {
+      "url": "research-agent.example.com:443",
+      "protocolBinding": "GRPC",
+      "protocolVersion": "1.0"
+    }
+  ],
+  "version": "1.0.0",
+  "capabilities": {
+    "streaming": true,
+    "extensions": [
+      {
+        "uri": "https://anra.dev/a2a/extensions/acp-tool-call/v1",
+        "description": "Streams sanitized ACP tool-call observations.",
+        "required": false
+      },
+      {
+        "uri": "https://anra.dev/a2a/extensions/acp-thought/v1",
+        "description": "Streams explicitly shareable reasoning summaries.",
+        "required": false
+      },
+      {
+        "uri": "https://anra.dev/a2a/extensions/acp-permission/v1",
+        "description": "Carries auditable ACP permission requests and responses.",
+        "required": false
+      }
+    ]
+  },
+  "defaultInputModes": ["text/plain", "application/json"],
+  "defaultOutputModes": ["text/plain", "application/json"],
+  "skills": [
+    {
+      "id": "technical-research",
+      "name": "Technical research",
+      "description": "Evaluates new technologies using primary sources, experiments, and reproducible evidence.",
+      "tags": ["research", "technology", "experiments"]
+    },
+    {
+      "id": "hard-engineering",
+      "name": "Complex engineering",
+      "description": "Diagnoses and implements solutions for difficult software and systems problems.",
+      "tags": ["engineering", "debugging", "architecture"]
+    }
+  ]
+}
