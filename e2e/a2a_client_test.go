@@ -148,8 +148,8 @@ func newA2AClient(t *testing.T, executor a2asrv.AgentExecutor) *a2aclient.Client
 	mux := http.NewServeMux()
 	server := httptest.NewServer(mux)
 	card := &a2a.AgentCard{
-		Name:        "Research Engineering Agent",
-		Description: "Investigates technologies and solves difficult engineering problems.",
+		Name:        "Test ACP Proxy",
+		Description: "An A2A proxy test fixture.",
 		Version:     "1.0.0",
 		Capabilities: a2a.AgentCapabilities{
 			Streaming:  true,
@@ -161,10 +161,10 @@ func newA2AClient(t *testing.T, executor a2asrv.AgentExecutor) *a2aclient.Client
 		DefaultInputModes:  []string{"text/plain"},
 		DefaultOutputModes: []string{"text/plain"},
 		Skills: []a2a.AgentSkill{{
-			ID:          "technical-research",
-			Name:        "Technical research",
-			Description: "Research and engineering",
-			Tags:        []string{"research", "engineering"},
+			ID:          "acp-proxy",
+			Name:        "ACP agent proxy",
+			Description: "Forward prompts to the configured ACP agent.",
+			Tags:        []string{"acp", "a2a", "proxy"},
 		}},
 	}
 	mux.Handle(a2asrv.WellKnownAgentCardPath, a2asrv.NewStaticAgentCardHandler(card))

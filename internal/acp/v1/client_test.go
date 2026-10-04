@@ -374,7 +374,18 @@ func TestMissingToolCallIDIsProtocolError(t *testing.T) {
 				},
 			},
 		})
-		_, _ = agent.receive() // session/cancel emitted by the SDK after adapter validation fails.
+		// The SDK can send $/cancel_request before session/cancel. Keep
+		// reading until the session notification arrives; otherwise its write
+		// blocks forever on this unbuffered pipe.
+		for {
+			notification, err := agent.receive()
+			if err != nil {
+				return
+			}
+			if notification.Method == "session/cancel" {
+				break
+			}
+		}
 		_ = agent.send(response(prompt.ID, map[string]any{"stopReason": "cancelled"}))
 	}()
 	handler := &recordingHandler{permission: func(context.Context, acp.PermissionRequest) (acp.PermissionOutcome, error) {

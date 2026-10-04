@@ -8,3 +8,6 @@ coverage.*
 .DS_Store
 .idea/
 .vscode/
+
+# E2E
+e2e/config.toml

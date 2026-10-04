@@ -4,17 +4,21 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"iter"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
-	"connectrpc.com/connect"
+	"connectrpc.com/connect/v2"
+	"connectrpc.com/connect/v2/connecthttp"
 	protocol "github.com/a2aproject/a2a-go/v2/a2a"
 	a2apb "github.com/a2aproject/a2a-go/v2/a2apb/v1"
 	"github.com/a2aproject/a2a-go/v2/a2apb/v1/pbconv"
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
+	a2apbconnect "github.com/anra-studio/gate/gen/a2a/a2apbconnect"
 	"google.golang.org/protobuf/encoding/protojson"
 )
 
@@ -78,17 +82,15 @@ func TestServerConnectAndAgentCard(t *testing.T) {
 	if err != nil {
 		t.Fatalf("convert send request: %v", err)
 	}
-	client := connect.NewClient[a2apb.SendMessageRequest, a2apb.SendMessageResponse](
-		server.Client(), server.URL+a2apb.A2AService_SendMessage_FullMethodName,
-	)
-	request := connect.NewRequest(pbRequest)
-	request.Header().Set(protocol.SvcParamVersion, string(protocol.Version))
-	request.Header().Set(protocol.SvcParamExtensions, testExtension)
-	result, err := client.CallUnary(t.Context(), request)
+	client := a2apbconnect.NewA2AServiceClient(connect.NewClient(connecthttp.NewTransport(server.Client(), server.URL)))
+	ctx, info := connect.NewClientContext(t.Context())
+	info.RequestHeader().Set(protocol.SvcParamVersion, string(protocol.Version))
+	info.RequestHeader().Set(protocol.SvcParamExtensions, testExtension)
+	result, err := client.SendMessage(ctx, pbRequest)
 	if err != nil {
 		t.Fatalf("Connect SendMessage: %v", err)
 	}
-	converted, err := pbconv.FromProtoSendMessageResponse(result.Msg)
+	converted, err := pbconv.FromProtoSendMessageResponse(result)
 	if err != nil {
 		t.Fatalf("convert send response: %v", err)
 	}
@@ -120,38 +122,38 @@ func TestServerConnectStreamingAndErrors(t *testing.T) {
 		t.Fatalf("convert send request: %v", err)
 	}
 
-	streamClient := connect.NewClient[a2apb.SendMessageRequest, a2apb.StreamResponse](
-		server.Client(), server.URL+a2apb.A2AService_SendStreamingMessage_FullMethodName,
-	)
-	stream, err := streamClient.CallServerStream(t.Context(), connect.NewRequest(pbRequest))
+	client := a2apbconnect.NewA2AServiceClient(connect.NewClient(connecthttp.NewTransport(server.Client(), server.URL)))
+	stream, err := client.SendStreamingMessage(t.Context(), pbRequest)
 	if err != nil {
 		t.Fatalf("Connect SendStreamingMessage: %v", err)
 	}
+	defer stream.Close()
 	var eventCount int
-	for stream.Receive() {
-		if _, err := pbconv.FromProtoStreamResponse(stream.Msg()); err != nil {
+	for {
+		event, err := stream.Receive()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			t.Fatalf("receive stream: %v", err)
+		}
+		if _, err := pbconv.FromProtoStreamResponse(event); err != nil {
 			t.Fatalf("convert stream response: %v", err)
 		}
 		eventCount++
-	}
-	if err := stream.Err(); err != nil {
-		t.Fatalf("receive stream: %v", err)
 	}
 	if eventCount != 5 {
 		t.Fatalf("stream event count = %d, want 5", eventCount)
 	}
 	<-executor.requests
 
-	getClient := connect.NewClient[a2apb.GetTaskRequest, a2apb.Task](
-		server.Client(), server.URL+a2apb.A2AService_GetTask_FullMethodName,
-	)
-	_, err = getClient.CallUnary(t.Context(), connect.NewRequest(&a2apb.GetTaskRequest{Id: "missing"}))
+	_, err = client.GetTask(t.Context(), &a2apb.GetTaskRequest{Id: "missing"})
 	if connect.CodeOf(err) != connect.CodeNotFound {
 		t.Fatalf("GetTask error = %v, code = %s, want %s", err, connect.CodeOf(err), connect.CodeNotFound)
 	}
 }
 
-func TestServerVanguardHTTPJSON(t *testing.T) {
+func TestServerHTTPJSON(t *testing.T) {
 	executor := &testExecutor{requests: make(chan *a2asrv.ExecutorContext, 1)}
 	server := newTestServer(t, executor)
 	message := protocol.NewMessage(protocol.MessageRoleUser, protocol.NewTextPart("hello"))
@@ -210,9 +212,9 @@ func TestNewServerValidation(t *testing.T) {
 	}
 }
 
-func newTestServer(t *testing.T, executor a2asrv.AgentExecutor) *httptest.Server {
+func newTestServer(t *testing.T, executor a2asrv.AgentExecutor, options ...Option) *httptest.Server {
 	t.Helper()
-	handler, err := NewServer(testCard(), executor)
+	handler, err := NewServer(testCard(), executor, options...)
 	if err != nil {
 		t.Fatalf("NewServer: %v", err)
 	}
@@ -238,5 +240,46 @@ func testCard() *protocol.AgentCard {
 		Skills: []protocol.AgentSkill{{
 			ID: "test", Name: "Test", Description: "Test", Tags: []string{"test"},
 		}},
+	}
+}
+
+// Authentication/observability middleware and HTTP limits are configured at
+// different layers in v2. Exercise both through the mounted HTTP handler.
+func TestServerConnectOptions(t *testing.T) {
+	interceptor := func(next connect.ServerFunc) connect.ServerFunc {
+		return func(ctx context.Context, spec connect.Spec, stream connect.ServerStream) error {
+			info, ok := connect.CallInfoForServerContext(ctx)
+			if !ok || info.RequestHeader().Get("X-Gate-Test") != "metadata" {
+				return connect.NewError(connect.CodeUnauthenticated, "missing metadata")
+			}
+			info.ResponseTrailer().Set("X-Gate-Method", spec.Procedure)
+			return next(ctx, spec, stream)
+		}
+	}
+	executor := &testExecutor{requests: make(chan *a2asrv.ExecutorContext, 1)}
+	server := newTestServer(t, executor, WithConnectInterceptors(interceptor), WithConnectHTTPOptions(connecthttp.WithReadMaxBytes(1024)))
+	client := a2apbconnect.NewA2AServiceClient(connect.NewClient(connecthttp.NewTransport(server.Client(), server.URL)))
+	req, err := pbconv.ToProtoSendMessageRequest(&protocol.SendMessageRequest{Message: protocol.NewMessage(protocol.MessageRoleUser, protocol.NewTextPart("hello"))})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.SendMessage(t.Context(), req); connect.CodeOf(err) != connect.CodeUnauthenticated {
+		t.Fatalf("interceptor error = %v", err)
+	}
+	ctx, info := connect.NewClientContext(t.Context())
+	info.RequestHeader().Set("X-Gate-Test", "metadata")
+	if _, err := client.SendMessage(ctx, req); err != nil {
+		t.Fatal(err)
+	}
+	<-executor.requests
+	if info.ResponseTrailer().Get("X-Gate-Method") != a2apbconnect.A2AServiceSendMessageProcedure {
+		t.Fatalf("response trailer was not propagated")
+	}
+	oversized, err := pbconv.ToProtoSendMessageRequest(&protocol.SendMessageRequest{Message: protocol.NewMessage(protocol.MessageRoleUser, protocol.NewTextPart(strings.Repeat("x", 2048)))})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.SendMessage(ctx, oversized); connect.CodeOf(err) != connect.CodeResourceExhausted {
+		t.Fatalf("read limit error = %v", err)
 	}
 }

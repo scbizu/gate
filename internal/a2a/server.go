@@ -1,6 +1,6 @@
 // Package a2a exposes Gate's A2A implementation over Connect RPC and
-// HTTP+JSON. Vanguard provides protocol routing and REST transcoding from the
-// canonical A2A protobuf service descriptor.
+// HTTP+JSON. Connect v2 serves protobuf RPCs; the official A2A REST handler
+// provides A2A's SSE framing and structured HTTP errors.
 package a2a
 
 import (
@@ -9,17 +9,18 @@ import (
 	"net/http"
 	"strings"
 
-	"connectrpc.com/connect"
-	"connectrpc.com/vanguard"
+	"connectrpc.com/connect/v2"
+	"connectrpc.com/connect/v2/connecthttp"
 	protocol "github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
+	a2apbconnect "github.com/anra-studio/gate/gen/a2a/a2apbconnect"
 )
 
-const ServiceName = "lf.a2a.v1.A2AService"
+const ServiceName = a2apbconnect.A2AServiceName
 
 // Server serves an A2A agent card and the canonical A2A protobuf service.
-// The RPC endpoint supports Connect, gRPC, and gRPC-Web. Vanguard additionally
-// exposes the HTTP+JSON routes declared by the A2A protobuf schema.
+// The RPC endpoint supports Connect, gRPC, and gRPC-Web. The REST endpoint
+// supports HTTP+JSON and server-sent events.
 type Server struct {
 	handler http.Handler
 }
@@ -31,7 +32,8 @@ type Option func(*serverOptions)
 
 type serverOptions struct {
 	requestHandlerOptions []a2asrv.RequestHandlerOption
-	connectHandlerOptions []connect.HandlerOption
+	connectHTTPOptions    []connecthttp.Option
+	connectInterceptors   []connect.ServerInterceptor
 }
 
 // WithRequestHandlerOptions forwards options to the official A2A request
@@ -42,10 +44,15 @@ func WithRequestHandlerOptions(options ...a2asrv.RequestHandlerOption) Option {
 	}
 }
 
-// WithConnectHandlerOptions forwards options to every Connect RPC handler.
-func WithConnectHandlerOptions(options ...connect.HandlerOption) Option {
+// WithConnectHTTPOptions forwards transport options to connecthttp.Mount.
+func WithConnectHTTPOptions(options ...connecthttp.Option) Option {
+	return func(config *serverOptions) { config.connectHTTPOptions = append(config.connectHTTPOptions, options...) }
+}
+
+// WithConnectInterceptors applies interceptors to every Connect RPC method.
+func WithConnectInterceptors(interceptors ...connect.ServerInterceptor) Option {
 	return func(config *serverOptions) {
-		config.connectHandlerOptions = append(config.connectHandlerOptions, options...)
+		config.connectInterceptors = append(config.connectInterceptors, interceptors...)
 	}
 }
 
@@ -73,22 +80,13 @@ func NewServer(card *protocol.AgentCard, executor a2asrv.AgentExecutor, options 
 		a2asrv.WithCapabilityChecks(&card.Capabilities),
 	}, config.requestHandlerOptions...)
 	requestHandler := a2asrv.NewHandler(executor, requestOptions...)
-	rpcHandler, err := newConnectHandler(requestHandler, config.connectHandlerOptions...)
-	if err != nil {
-		return nil, err
-	}
-
-	fallback := http.NewServeMux()
-	fallback.Handle(a2asrv.WellKnownAgentCardPath, a2asrv.NewStaticAgentCardHandler(card))
-
-	transcoder, err := vanguard.NewTranscoder(
-		[]*vanguard.Service{vanguard.NewService(ServiceName, rpcHandler)},
-		vanguard.WithUnknownHandler(fallback),
-	)
-	if err != nil {
-		return nil, fmt.Errorf("a2a: create vanguard transcoder: %w", err)
-	}
-	return &Server{handler: transcoder}, nil
+	rpcServer := connect.NewServer(config.connectInterceptors...)
+	a2apbconnect.RegisterA2AServiceHandler(rpcServer, &connectAdapter{handler: requestHandler})
+	mux := http.NewServeMux()
+	connecthttp.Mount(mux, rpcServer, config.connectHTTPOptions...)
+	mux.Handle(a2asrv.WellKnownAgentCardPath, a2asrv.NewStaticAgentCardHandler(card))
+	mux.Handle("/", a2asrv.NewRESTHandler(requestHandler))
+	return &Server{handler: mux}, nil
 }
 
 // ServeHTTP implements http.Handler.

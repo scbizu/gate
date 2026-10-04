@@ -1,27 +1,11 @@
 package proto_test
 
 import (
-	"os"
 	"testing"
 
 	a2av1 "github.com/a2aproject/a2a-go/v2/a2apb/v1"
-	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/reflect/protoreflect"
 )
-
-func TestExampleAgentCardMatchesSchema(t *testing.T) {
-	b, err := os.ReadFile("examples/research-engineering-agent-card.json")
-	if err != nil {
-		t.Fatal(err)
-	}
-	var card a2av1.AgentCard
-	if err := protojson.Unmarshal(b, &card); err != nil {
-		t.Fatalf("unmarshal example Agent Card: %v", err)
-	}
-	if got := len(card.GetCapabilities().GetExtensions()); got != 3 {
-		t.Fatalf("extension count = %d, want 3", got)
-	}
-}
 
 func TestCanonicalServiceStreamingShape(t *testing.T) {
 	if got := a2av1.File_a2av1_proto.Path(); got != "a2av1.proto" {

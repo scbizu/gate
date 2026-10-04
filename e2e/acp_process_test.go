@@ -140,7 +140,7 @@ func TestACPProcessCancelPendingPermission(t *testing.T) {
 	}
 }
 
-func startACPAgentProcess(t *testing.T) *acpv1.Client {
+func startACPAgentProcess(t *testing.T, extraEnv ...string) *acpv1.Client {
 	t.Helper()
 	executable, err := os.Executable()
 	if err != nil {
@@ -149,7 +149,7 @@ func startACPAgentProcess(t *testing.T) *acpv1.Client {
 	client, err := acpv1.StartProcess(t.Context(), acpv1.ProcessConfig{
 		Command: executable,
 		Args:    []string{"-test.run=^TestACPAgentProcess$"},
-		Env:     []string{acpAgentHelperEnv + "=1"},
+		Env:     append([]string{acpAgentHelperEnv + "=1"}, extraEnv...),
 	})
 	if err != nil {
 		t.Fatalf("StartProcess() error = %v", err)
@@ -208,31 +208,54 @@ func TestACPAgentProcess(t *testing.T) {
 
 type e2eACPAgent struct {
 	connection *acpsdk.AgentSideConnection
+	mu         sync.Mutex
+	sessions   map[acpsdk.SessionId]acpsdk.NewSessionRequest
 }
 
 func (*e2eACPAgent) Initialize(_ context.Context, request acpsdk.InitializeRequest) (acpsdk.InitializeResponse, error) {
 	if request.ProtocolVersion != acpsdk.ProtocolVersionNumber {
 		return acpsdk.InitializeResponse{}, fmt.Errorf("unsupported protocol version %d", request.ProtocolVersion)
 	}
+	if request.ClientCapabilities.Fs.ReadTextFile || request.ClientCapabilities.Fs.WriteTextFile || request.ClientCapabilities.Terminal {
+		return acpsdk.InitializeResponse{}, errors.New("client must not advertise unsupported capabilities")
+	}
+	version := acpsdk.ProtocolVersion(acpsdk.ProtocolVersionNumber)
+	if os.Getenv("GATE_E2E_VERSION") == "2" {
+		version = 2
+	}
 	return acpsdk.InitializeResponse{
-		ProtocolVersion: acpsdk.ProtocolVersionNumber,
+		ProtocolVersion: version,
 		AgentInfo: &acpsdk.Implementation{
 			Name: "gate-e2e-agent", Version: "test",
 		},
 		AgentCapabilities: acpsdk.AgentCapabilities{
-			PromptCapabilities: acpsdk.PromptCapabilities{},
+			PromptCapabilities: acpsdk.PromptCapabilities{Image: true, Audio: true},
+			McpCapabilities:    acpsdk.McpCapabilities{Http: true, Sse: true},
 		},
 	}, nil
 }
 
-func (*e2eACPAgent) NewSession(_ context.Context, request acpsdk.NewSessionRequest) (acpsdk.NewSessionResponse, error) {
+func (a *e2eACPAgent) NewSession(_ context.Context, request acpsdk.NewSessionRequest) (acpsdk.NewSessionResponse, error) {
 	if request.Cwd == "" {
 		return acpsdk.NewSessionResponse{}, errors.New("missing cwd")
 	}
-	return acpsdk.NewSessionResponse{SessionId: "e2e-session"}, nil
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.sessions == nil {
+		a.sessions = make(map[acpsdk.SessionId]acpsdk.NewSessionRequest)
+	}
+	id := acpsdk.SessionId("e2e-session")
+	if len(a.sessions) != 0 {
+		id = acpsdk.SessionId(fmt.Sprintf("e2e-session-%d", len(a.sessions)+1))
+	}
+	a.sessions[id] = request
+	return acpsdk.NewSessionResponse{SessionId: id}, nil
 }
 
 func (a *e2eACPAgent) Prompt(ctx context.Context, request acpsdk.PromptRequest) (acpsdk.PromptResponse, error) {
+	if handled, response, err := a.specPrompt(ctx, request); handled {
+		return response, err
+	}
 	message := acpsdk.UpdateAgentMessageText("Researching.")
 	message.AgentMessageChunk.MessageId = acpsdk.Ptr("00000000-0000-4000-8000-000000000001")
 	if err := a.sendUpdate(ctx, request.SessionId, message); err != nil {

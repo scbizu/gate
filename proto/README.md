@@ -1,9 +1,15 @@
 # Gate A2A protobuf contract
 
-The normative A2A Protocol v1.0.0 schema and Go client types are not copied or
-generated into this repository. Buf validates the schema directly from the
+The normative A2A Protocol v1.0.0 schema and core protobuf message types are not
+copied or generated into this repository. Buf validates the schema directly from the
 immutable upstream commit configured as `A2A_GIT_INPUT` in the Makefile, while
 Go code uses the official `github.com/a2aproject/a2a-go/v2` SDK.
+
+Gate generates Connect v2 service bindings in
+`gen/a2a/a2apbconnect/a2av1.connect.go`. These reuse the SDK's protobuf messages
+and descriptors; they contain the service interface, registration, clients, and
+typed streams. `internal/a2a/connect.go` implements that generated interface and
+converts between protobuf messages and the SDK's A2A request handler.
 
 `anra/gate/a2a/extensions/v1/extensions.proto` is an independent local Buf
 module defining gate-owned ACP observability and permission payloads. It does
@@ -12,14 +18,26 @@ SDK remains the source of core protocol types and transport implementations.
 
 ## Official Go SDK surface
 
-Generate the gate-owned extension messages with:
+Generate the gate-owned extension messages and A2A Connect bindings with:
 
 ```sh
 make proto-generate
 ```
 
-This generates only local Gate extensions via `buf.gen.yaml`. Network access is
-required for the remote plugin.
+The extensions use `buf.gen.yaml`. Network access is required for the remote
+protobuf plugin and, on first use, the pinned Connect v2 generator.
+
+To regenerate only the A2A Connect bindings:
+
+```sh
+make a2a-connect-generate
+```
+
+`tools/gen-a2a-connect` builds a protoc code-generation request from the SDK's
+compiled descriptor and its dependencies, then invokes the official Connect
+generator. Both versions are pinned by `go.mod`. It maps the descriptor's upstream
+`go_package` option to the versioned SDK import path, without generating another
+copy of the A2A messages or maintaining a local copy of the core schema.
 
 The official SDK exposes the canonical A2A operations, including `SendMessage`,
 `SendStreamingMessage`, `GetTask`, `ListTasks`, `CancelTask`, and
@@ -28,10 +46,6 @@ The official SDK exposes the canonical A2A operations, including `SendMessage`,
 The public Agent Card must advertise a supported interface with protocol
 version `1.0` and streaming capability. Use the official SDK's JSON-RPC, REST,
 or gRPC binding for wire interoperability.
-
-`examples/research-engineering-agent-card.json` is a schema-tested discovery
-template for the research/engineering agent. Replace its endpoint and identity
-fields before publishing it at `/.well-known/agent-card.json`.
 
 ## Extension negotiation and placement
 
