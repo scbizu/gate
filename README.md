@@ -35,3 +35,7 @@ and client filesystem/terminal capabilities are also not exposed by the adapter.
 
 Run `go test ./...` or `go test -race ./...`. See [e2e coverage](e2e/README.md)
 for the exercised protocol cases and current boundaries.
+
+Development tools and protobuf generation are pinned in `mise.toml`.
+Run `mise install`, then `mise run proto-generate` to regenerate bindings or
+`mise run test` to validate schemas and run tests. See [protobuf contract](proto/README.md).

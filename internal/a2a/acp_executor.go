@@ -17,6 +17,7 @@ import (
 	extensionsv1 "github.com/anra-studio/gate/gen/anra/gate/a2a/extensions/v1"
 	"github.com/anra-studio/gate/internal/acp"
 	acpv1 "github.com/anra-studio/gate/internal/acp/v1"
+	gateerrors "github.com/anra-studio/gate/internal/errors"
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/structpb"
@@ -247,7 +248,7 @@ func (e *ACPExecutor) Cancel(ctx context.Context, execCtx *a2asrv.ExecutorContex
 		}
 		turn.mu.Unlock()
 		if err := turn.actor.client.Cancel(ctx, turn.actor.sessionID); err != nil {
-			yield(nil, fmt.Errorf("cancel ACP prompt: %w", err))
+			yield(nil, gateerrors.Wrap(fmt.Errorf("cancel ACP prompt: %w", err)))
 			return
 		}
 		timer := time.NewTimer(e.config.CancelTimeout)
@@ -256,7 +257,7 @@ func (e *ACPExecutor) Cancel(ctx context.Context, execCtx *a2asrv.ExecutorContex
 		case <-turn.done:
 			result := turn.promptResult()
 			if result.err != nil {
-				yield(nil, fmt.Errorf("wait for ACP cancellation: %w", result.err))
+				yield(nil, gateerrors.Wrap(fmt.Errorf("wait for ACP cancellation: %w", result.err)))
 				return
 			}
 			if result.reason != acp.StopCancelled {

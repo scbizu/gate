@@ -1,0 +1,39 @@
+[tools]
+go = "1.27.1"
+buf = "1.61.0"
+"go:google.golang.org/protobuf/cmd/protoc-gen-go" = "v1.36.12"
+"go:connectrpc.com/connect/v2/cmd/protoc-gen-connect-go" = "v2.0.0-rc.1"
+
+[env]
+A2A_GIT_INPUT = "https://github.com/a2aproject/A2A.git#commit=173695755607e884aa9acf8ce4feed90e32727a1,subdir=specification,filter=tree:0"
+# Matches tools/proto_gen.sh in a2a-go v2.5.0; update together with the SDK.
+A2A_SDK_GIT_INPUT = "https://github.com/a2aproject/A2A.git#commit=7df7685561b19c841c5a1349653df347db8d3314,subdir=specification,filter=tree:0"
+
+[tasks.test]
+depends = ["proto-lint", "proto-build"]
+run = "go test ./..."
+
+[tasks.proto-lint]
+run = "buf lint"
+
+[tasks.proto-build]
+run = ["buf build", 'buf build "$A2A_GIT_INPUT"']
+
+[tasks.proto-generate]
+depends = ["a2a-connect-generate"]
+run = "buf generate --template buf.gen.yaml"
+
+[tasks.a2a-connect-generate]
+description = "Generate Connect v2 bindings using the pinned SDK schema"
+run = '''
+set -eu
+schema_dir=$(mktemp -d)
+trap 'rm -rf "$schema_dir"' EXIT
+buf export "$A2A_SDK_GIT_INPUT" --path a2a.proto --output "$schema_dir"
+# Match the SDK descriptor filename to retain its exported Go descriptor name.
+mv "$schema_dir/a2a.proto" "$schema_dir/a2av1.proto"
+buf generate "$schema_dir/a2av1.proto" --template buf.a2a.gen.yaml
+'''
+
+[tasks.proto-breaking]
+run = 'buf breaking --against "${AGAINST:-.git#branch=main}"'

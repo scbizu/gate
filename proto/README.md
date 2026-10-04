@@ -2,7 +2,7 @@
 
 The normative A2A Protocol v1.0.0 schema and core protobuf message types are not
 copied or generated into this repository. Buf validates the schema directly from the
-immutable upstream commit configured as `A2A_GIT_INPUT` in the Makefile, while
+immutable upstream commit configured as `A2A_GIT_INPUT` in `mise.toml`, while
 Go code uses the official `github.com/a2aproject/a2a-go/v2` SDK.
 
 Gate generates Connect v2 service bindings in
@@ -21,23 +21,27 @@ SDK remains the source of core protocol types and transport implementations.
 Generate the gate-owned extension messages and A2A Connect bindings with:
 
 ```sh
-make proto-generate
+mise install
+mise run proto-generate
 ```
 
-The extensions use `buf.gen.yaml`. Network access is required for the remote
-protobuf plugin and, on first use, the pinned Connect v2 generator.
+The extensions use `buf.gen.yaml`. mise installs pinned versions of Go, Buf,
+and the local protobuf and Connect v2 generators. Network access is required
+for installation and fetching the upstream schema. Existing `make` commands
+remain aliases for the mise tasks.
 
 To regenerate only the A2A Connect bindings:
 
 ```sh
-make a2a-connect-generate
+mise run a2a-connect-generate
 ```
 
-`tools/gen-a2a-connect` builds a protoc code-generation request from the SDK's
-compiled descriptor and its dependencies, then invokes the official Connect
-generator. Both versions are pinned by `go.mod`. It maps the descriptor's upstream
-`go_package` option to the versioned SDK import path, without generating another
-copy of the A2A messages or maintaining a local copy of the core schema.
+The mise task exports the upstream schema pinned by `A2A_SDK_GIT_INPUT` to a
+temporary directory and renames `a2a.proto` to `a2av1.proto`, matching the SDK's
+descriptor filename. `buf.a2a.gen.yaml` invokes the official Connect generator
+and maps the upstream `go_package` to the versioned SDK import path. No core
+message types or schema copies are added to the repository. Update the schema
+commit together with the SDK, using the commit in the SDK's `tools/proto_gen.sh`.
 
 The official SDK exposes the canonical A2A operations, including `SendMessage`,
 `SendStreamingMessage`, `GetTask`, `ListTasks`, `CancelTask`, and

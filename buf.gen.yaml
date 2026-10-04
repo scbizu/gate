@@ -6,11 +6,11 @@ managed:
     - file_option: go_package_prefix
       value: github.com/anra-studio/gate/gen
 plugins:
-  - remote: buf.build/protocolbuffers/go
+  - local: protoc-gen-go
     out: gen
     opt:
       - paths=source_relative
-  - local: [go, run, connectrpc.com/connect/v2/cmd/protoc-gen-connect-go@v2.0.0-rc.1]
+  - local: protoc-gen-connect-go
     out: gen
     opt:
       - paths=source_relative

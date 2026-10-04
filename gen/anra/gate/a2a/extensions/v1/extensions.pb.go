@@ -596,8 +596,8 @@ type ToolCallUpdate struct {
 	Title    string         `protobuf:"bytes,5,opt,name=title,proto3" json:"title,omitempty"`
 	Kind     string         `protobuf:"bytes,6,opt,name=kind,proto3" json:"kind,omitempty"`
 	// Sanitized tool content encoded as arbitrary ProtoJSON values. Keeping the
-	// extension independent of a2a.proto lets the core protocol be generated
-	// directly from its authoritative upstream Git input.
+	// extension independent of the core A2A schema lets applications use the
+	// official SDK without maintaining a local copy of the protocol schema.
 	Content       []*structpb.Value   `protobuf:"bytes,7,rep,name=content,proto3" json:"content,omitempty"`
 	Locations     []*ToolCallLocation `protobuf:"bytes,8,rep,name=locations,proto3" json:"locations,omitempty"`
 	unknownFields protoimpl.UnknownFields
