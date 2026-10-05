@@ -1,0 +1,9 @@
+# Only send the Go build inputs; exclude local credentials and artifacts.
+**
+!go.mod
+!go.sum
+!main.go
+!internal/
+!internal/**
+!gen/
+!gen/**

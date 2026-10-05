@@ -16,6 +16,29 @@ The agent must speak ACP over stdin/stdout. Its environment is inherited from
 Gate; supply provider credentials through the environment required by that
 agent. Agent stderr goes to Gate's stderr.
 
+### Docker
+
+```sh
+docker build -t gate .
+```
+
+The image contains Gate and CA certificates. Install your ACP agent and its
+runtime in a derived image, or mount a compatible Linux executable. For example,
+with a standalone agent binary built for the container's architecture:
+
+```sh
+docker run --rm --init -p 8080:8080 \
+  --mount type=bind,src="$(pwd)",dst=/workspace \
+  --mount type=bind,src=/absolute/path/to/acp-agent,dst=/usr/local/bin/acp-agent,readonly \
+  gate -cwd /workspace -public-url http://localhost:8080 -- /usr/local/bin/acp-agent
+```
+
+The container runs as UID/GID `10001:10001`; mounted projects must be readable
+and, if the agent edits files, writable by that user. Pass the agent's credentials
+at runtime with `--env` or `--env-file`. The default listener is `0.0.0.0:8080`;
+set `-public-url` to the origin clients use, including when behind a reverse proxy.
+Gate flags and the required `-- <acp-agent> [arguments...]` follow the image name.
+
 Discover the agent at `http://127.0.0.1:8080/.well-known/agent-card.json`.
 HTTP+JSON (including SSE), Connect, gRPC, and gRPC-Web share the same listener.
 Cleartext gRPC uses HTTP/2 via h2c. Use `-public-url https://gate.example.com`
