@@ -1,30 +1,33 @@
 # Gate
 
-Gate is a protocol proxy that exposes an ACP v1 agent process over A2A.
-The configured agent provides the actual capabilities; Gate forwards requests,
-responses, and supported lifecycle operations between the two protocols.
+Gate exposes an ACP v1 agent over A2A.
 
-Requires Go 1.26 or newer. RPCs use Connect v2 (`v2.0.0-rc.1`), registered on
-`connect.NewServer` and mounted with `connecthttp.Mount`.
+## Run
+
+Go 1.27.1 and development tools are pinned in `mise.toml`.
 
 ```sh
+mise install
 mise run build
 ./bin/gate -listen 127.0.0.1:8080 -cwd /absolute/project -- /path/to/acp-agent [agent arguments...]
 ```
 
-The agent must speak ACP over stdin/stdout. Its environment is inherited from
-Gate; supply provider credentials through the environment required by that
-agent. Agent stderr goes to Gate's stderr.
+The agent must speak ACP over stdin/stdout. It inherits Gate's environment;
+set provider credentials there. Agent stderr goes to Gate's stderr.
 
-### Docker
+Agent card: `http://127.0.0.1:8080/.well-known/agent-card.json`.
+HTTP+JSON (SSE), Connect, gRPC, and gRPC-Web share one listener; cleartext gRPC
+uses h2c. Set `-public-url` to the public origin behind a reverse proxy.
+Use `-listen 127.0.0.1:0` to select and advertise an available port.
+
+## Docker
 
 ```sh
 docker build -t gate .
 ```
 
-The image contains Gate and CA certificates. Install your ACP agent and its
-runtime in a derived image, or mount a compatible Linux executable. For example,
-with a standalone agent binary built for the container's architecture:
+The image contains Gate and CA certificates. Install the agent and its runtime
+in a derived image, or mount a Linux binary matching the container architecture:
 
 ```sh
 docker run --rm --init -p 8080:8080 \
@@ -33,35 +36,31 @@ docker run --rm --init -p 8080:8080 \
   gate -cwd /workspace -public-url http://localhost:8080 -- /usr/local/bin/acp-agent
 ```
 
-The container runs as UID/GID `10001:10001`; mounted projects must be readable
-and, if the agent edits files, writable by that user. Pass the agent's credentials
-at runtime with `--env` or `--env-file`. The default listener is `0.0.0.0:8080`;
-set `-public-url` to the origin clients use, including when behind a reverse proxy.
-Gate flags and the required `-- <acp-agent> [arguments...]` follow the image name.
+The container runs as UID/GID `10001:10001`. Grant it read access to mounted
+projects and write access if the agent edits files. Pass credentials with `--env`
+or `--env-file`. It listens on `0.0.0.0:8080`; set `-public-url` to the client-facing
+origin.
 
-Discover the agent at `http://127.0.0.1:8080/.well-known/agent-card.json`.
-HTTP+JSON (including SSE), Connect, gRPC, and gRPC-Web share the same listener.
-Cleartext gRPC uses HTTP/2 via h2c. Use `-public-url https://gate.example.com`
-when a reverse proxy supplies the public origin. `-listen 127.0.0.1:0` chooses
-an available port and advertises the resulting address.
+## Behavior
 
-Gate starts one ACP process/session lazily per A2A context, reuses that session
-across turns, and serializes prompts within the context. Interrupt or SIGTERM
-closes ACP processes and shuts down HTTP connections.
+Gate starts one ACP process/session on demand per A2A context and reuses it
+across turns. Prompts within a context run serially. Interrupt or SIGTERM closes
+the agent processes and HTTP connections.
 
-The agent card advertises optional thought and tool-call extensions. Clients
-must activate each extension they want. Raw tool input/output is excluded.
-Permission requests currently receive `cancelled`; interactive permission
-approval/resumption is not implemented and the permission extension is not
-advertised. ACP authentication, session loading, session modes/configuration,
-and client filesystem/terminal capabilities are also not exposed by the adapter.
+Clients opt in to thought and tool-call extensions; raw tool input/output is
+excluded. Permission requests receive `cancelled`; interactive approval and the
+permission extension are unsupported. ACP authentication, session loading,
+session modes/configuration, and client filesystem/terminal capabilities are
+also unsupported.
 
-Run `mise run test` for all checks or `mise run e2e` to build Gate and run BDD
-scenarios. CLI checks use ordinary Go tests in `main_test.go`; run them with
-`mise run cli-test`. See [e2e coverage](e2e/README.md)
-for executable behavior definitions, and [ACP package tests](internal/acp/v1/README.md)
-for protocol boundary coverage.
+## Development
 
-Development tools and protobuf generation are pinned in `mise.toml`.
-Run `mise install`, then `mise run proto-generate` to regenerate bindings or
-`mise run test` to validate schemas and run tests. See [protobuf contract](proto/README.md).
+```sh
+mise run test            # Build, validate schemas, and run all tests
+mise run e2e             # Build and run BDD scenarios
+mise run cli-test        # Build and test CLI arguments and shutdown
+mise run proto-generate  # Regenerate protobuf and Connect bindings
+```
+
+See [e2e coverage](e2e/README.md), [ACP tests](internal/acp/v1/README.md),
+and [protobuf contract](proto/README.md).
