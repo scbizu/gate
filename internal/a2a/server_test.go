@@ -9,12 +9,15 @@ import (
 	"iter"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 
 	"connectrpc.com/connect/v2"
 	"connectrpc.com/connect/v2/connecthttp"
 	protocol "github.com/a2aproject/a2a-go/v2/a2a"
+	"github.com/a2aproject/a2a-go/v2/a2aclient"
+	"github.com/a2aproject/a2a-go/v2/a2aext"
 	a2apb "github.com/a2aproject/a2a-go/v2/a2apb/v1"
 	"github.com/a2aproject/a2a-go/v2/a2apb/v1/pbconv"
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
@@ -281,5 +284,61 @@ func TestServerConnectOptions(t *testing.T) {
 	}
 	if _, err := client.SendMessage(ctx, oversized); connect.CodeOf(err) != connect.CodeResourceExhausted {
 		t.Fatalf("read limit error = %v", err)
+	}
+}
+
+// The end-to-end features cover task results and streaming. Keep the distinct
+// request-metadata contract here, against Gate's server rather than an SDK-only
+// JSON-RPC stub.
+func TestServerA2AClientRequestMetadata(t *testing.T) {
+	for _, streaming := range []bool{false, true} {
+		name := "unary"
+		if streaming {
+			name = "streaming"
+		}
+		t.Run(name, func(t *testing.T) {
+			executor := &testExecutor{requests: make(chan *a2asrv.ExecutorContext, 1)}
+			server := newTestServer(t, executor)
+			card := testCard()
+			card.SupportedInterfaces[0].URL = server.URL
+			client, err := a2aclient.NewFromCard(t.Context(), card,
+				a2aclient.WithCallInterceptors(a2aext.NewActivator(testExtension)))
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() {
+				if err := client.Destroy(); err != nil {
+					t.Error(err)
+				}
+			})
+			message := protocol.NewMessage(protocol.MessageRoleUser, protocol.NewTextPart("Investigate the failure"))
+			message.ID = "message-01"
+			message.Extensions = []string{testExtension}
+			req := &protocol.SendMessageRequest{Message: message}
+			if streaming {
+				for _, err := range client.SendStreamingMessage(t.Context(), req) {
+					if err != nil {
+						t.Fatal(err)
+					}
+				}
+			} else {
+				if _, err := client.SendMessage(t.Context(), req); err != nil {
+					t.Fatal(err)
+				}
+			}
+			observed := <-executor.requests
+			got := observed.Message
+			if got.ID != message.ID || got.Role != message.Role || len(got.Parts) != 1 || got.Parts[0].Text() != message.Parts[0].Text() || !slices.Equal(got.Extensions, message.Extensions) {
+				t.Fatalf("message metadata changed: %#v", got)
+			}
+			versions, _ := observed.ServiceParams.Get(protocol.SvcParamVersion)
+			if !slices.Equal(versions, []string{string(protocol.Version)}) {
+				t.Fatalf("A2A-Version = %v", versions)
+			}
+			extensions, _ := observed.ServiceParams.Get(protocol.SvcParamExtensions)
+			if !slices.Equal(extensions, []string{testExtension}) {
+				t.Fatalf("A2A-Extensions = %v", extensions)
+			}
+		})
 	}
 }

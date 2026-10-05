@@ -1,9 +1,8 @@
-package e2e_test
+package v1_test
 
 import (
 	"context"
 	"errors"
-	"fmt"
 	"reflect"
 	"strings"
 	"sync"
@@ -12,86 +11,7 @@ import (
 
 	"github.com/anra-studio/gate/internal/acp"
 	acpv1 "github.com/anra-studio/gate/internal/acp/v1"
-	sdk "github.com/coder/acp-go-sdk"
 )
-
-// specPrompt provides deterministic ACP peer behavior, without a model provider.
-func (a *e2eACPAgent) specPrompt(ctx context.Context, req sdk.PromptRequest) (bool, sdk.PromptResponse, error) {
-	a.mu.Lock()
-	session, exists := a.sessions[req.SessionId]
-	a.mu.Unlock()
-	if !exists {
-		return true, sdk.PromptResponse{}, sdk.NewInvalidParams(nil)
-	}
-	text := ""
-	if len(req.Prompt) > 0 && req.Prompt[0].Text != nil {
-		text = req.Prompt[0].Text.Text
-	}
-	end := sdk.PromptResponse{StopReason: sdk.StopReasonEndTurn}
-	switch {
-	case strings.HasPrefix(text, "stop:"):
-		return true, sdk.PromptResponse{StopReason: sdk.StopReason(strings.TrimPrefix(text, "stop:"))}, nil
-	case text == "rpc-error":
-		return true, sdk.PromptResponse{}, sdk.NewInvalidParams(map[string]any{"private": "must-not-cross-adapter"})
-	case text == "wait":
-		if err := a.sendUpdate(ctx, req.SessionId, sdk.UpdateAgentMessageText("waiting")); err != nil {
-			return true, end, err
-		}
-		<-ctx.Done()
-		return true, sdk.PromptResponse{StopReason: sdk.StopReasonCancelled}, nil
-	case text == "session":
-		return true, end, a.sendUpdate(ctx, req.SessionId, sdk.UpdateAgentMessageText(string(req.SessionId)))
-	case text == "mcp":
-		if len(session.McpServers) != 3 || len(session.AdditionalDirectories) != 1 {
-			return true, end, errors.New("missing session configuration")
-		}
-		stdio, http, sse := session.McpServers[0].Stdio, session.McpServers[1].Http, session.McpServers[2].Sse
-		if stdio == nil || stdio.Command != "/bin/echo" || len(stdio.Args) != 1 || len(stdio.Env) != 1 || stdio.Env[0].Value != "test-token" || http == nil || len(http.Headers) != 1 || http.Headers[0].Value != "test-header" || sse == nil || sse.Url != "https://example.com/sse" {
-			return true, end, errors.New("incorrect MCP conversion")
-		}
-		return true, end, nil
-	case text == "reverse-rpc":
-		_, readErr := a.connection.ReadTextFile(ctx, sdk.ReadTextFileRequest{SessionId: req.SessionId, Path: "/workspace/file"})
-		_, writeErr := a.connection.WriteTextFile(ctx, sdk.WriteTextFileRequest{SessionId: req.SessionId, Path: "/workspace/file", Content: "unsafe"})
-		_, createErr := a.connection.CreateTerminal(ctx, sdk.CreateTerminalRequest{SessionId: req.SessionId, Command: "echo"})
-		_, outputErr := a.connection.TerminalOutput(ctx, sdk.TerminalOutputRequest{SessionId: req.SessionId, TerminalId: "test"})
-		_, killErr := a.connection.KillTerminal(ctx, sdk.KillTerminalRequest{SessionId: req.SessionId, TerminalId: "test"})
-		_, releaseErr := a.connection.ReleaseTerminal(ctx, sdk.ReleaseTerminalRequest{SessionId: req.SessionId, TerminalId: "test"})
-		_, waitErr := a.connection.WaitForTerminalExit(ctx, sdk.WaitForTerminalExitRequest{SessionId: req.SessionId, TerminalId: "test"})
-		for _, err := range []error{readErr, writeErr, createErr, outputErr, killErr, releaseErr, waitErr} {
-			var rpc *sdk.RequestError
-			if !errors.As(err, &rpc) || rpc.Code != -32601 {
-				return true, end, fmt.Errorf("unsupported reverse RPC: %v", err)
-			}
-		}
-		return true, end, nil
-	case text == "observations":
-		updates := []sdk.SessionUpdate{
-			sdk.UpdateUserMessageText("history is not agent output"),
-			sdk.UpdatePlan(sdk.PlanEntry{Content: "inspect", Priority: sdk.PlanEntryPriorityMedium, Status: sdk.PlanEntryStatusPending}),
-			sdk.UpdateAgentMessageText("research "),
-			sdk.UpdateAgentThoughtText("Inspect."),
-			sdk.StartToolCall("spec-tool", "Edit file", sdk.WithStartKind(sdk.ToolKindEdit), sdk.WithStartStatus(sdk.ToolCallStatusInProgress), sdk.WithStartRawInput(map[string]any{"secret": "must-not-cross-adapter"}), sdk.WithStartContent([]sdk.ToolCallContent{sdk.ToolDiffContent("/workspace/file", "new", "old"), sdk.ToolTerminalRef("terminal-1"), sdk.ToolContent(sdk.TextBlock("output"))})),
-			sdk.UpdateToolCall("spec-tool", sdk.WithUpdateStatus(sdk.ToolCallStatusCompleted), sdk.WithUpdateRawOutput(map[string]any{"secret": "must-not-cross-adapter"})),
-			sdk.UpdateAgentMessageText("complete"),
-		}
-		for _, update := range updates {
-			if err := a.sendUpdate(ctx, req.SessionId, update); err != nil {
-				return true, end, err
-			}
-		}
-		return true, end, nil
-	case text == "echo":
-		for _, block := range req.Prompt[1:] {
-			if err := a.sendUpdate(ctx, req.SessionId, sdk.UpdateAgentMessage(block)); err != nil {
-				return true, end, err
-			}
-		}
-		return true, end, nil
-	default:
-		return false, end, nil
-	}
-}
 
 func initializedACP(t *testing.T) (*acpv1.Client, string) {
 	t.Helper()
@@ -110,8 +30,8 @@ func initializedACP(t *testing.T) (*acpv1.Client, string) {
 	return client, session.ID
 }
 
-func rejectingHandler() *e2eACPHandler {
-	return &e2eACPHandler{permission: func(context.Context, acp.PermissionRequest) (acp.PermissionOutcome, error) {
+func rejectingHandler() *acpProcessHandler {
+	return &acpProcessHandler{permission: func(context.Context, acp.PermissionRequest) (acp.PermissionOutcome, error) {
 		return acp.CancelPermission(), nil
 	}}
 }
@@ -252,7 +172,7 @@ func TestACPProcessPermissionOutcomes(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			client, id := initializedACP(t)
-			h := &e2eACPHandler{permission: func(_ context.Context, r acp.PermissionRequest) (acp.PermissionOutcome, error) {
+			h := &acpProcessHandler{permission: func(_ context.Context, r acp.PermissionRequest) (acp.PermissionOutcome, error) {
 				if len(r.Options) != 2 || r.Options[0].Kind != "allow_once" || r.ToolCall.Title != "Run tests" {
 					return acp.PermissionOutcome{}, errors.New("bad permission conversion")
 				}
@@ -274,7 +194,7 @@ func TestACPProcessPermissionOutcomes(t *testing.T) {
 func TestACPProcessConcurrentPromptAndClose(t *testing.T) {
 	client, id := initializedACP(t)
 	started := make(chan struct{})
-	h := &signalUpdateHandler{e2eACPHandler: rejectingHandler(), started: started}
+	h := &signalUpdateHandler{acpProcessHandler: rejectingHandler(), started: started}
 	result := make(chan error, 1)
 	go func() {
 		_, err := client.Prompt(t.Context(), acp.PromptRequest{SessionID: id, Content: []acp.Content{acp.Text("wait")}}, h)
@@ -322,12 +242,12 @@ func TestACPProcessConcurrentPromptAndClose(t *testing.T) {
 }
 
 type signalUpdateHandler struct {
-	*e2eACPHandler
+	*acpProcessHandler
 	started chan struct{}
 	once    sync.Once
 }
 
 func (h *signalUpdateHandler) OnUpdate(ctx context.Context, u acp.Update) {
-	h.e2eACPHandler.OnUpdate(ctx, u)
+	h.acpProcessHandler.OnUpdate(ctx, u)
 	h.once.Do(func() { close(h.started) })
 }

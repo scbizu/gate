@@ -1,4 +1,4 @@
-package e2e_test
+package v1_test
 
 import (
 	"context"

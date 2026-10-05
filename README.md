@@ -8,7 +8,7 @@ Requires Go 1.26 or newer. RPCs use Connect v2 (`v2.0.0-rc.1`), registered on
 `connect.NewServer` and mounted with `connecthttp.Mount`.
 
 ```sh
-go build -o bin/gate .
+mise run build
 ./bin/gate -listen 127.0.0.1:8080 -cwd /absolute/project -- /path/to/acp-agent [agent arguments...]
 ```
 
@@ -33,8 +33,11 @@ approval/resumption is not implemented and the permission extension is not
 advertised. ACP authentication, session loading, session modes/configuration,
 and client filesystem/terminal capabilities are also not exposed by the adapter.
 
-Run `go test ./...` or `go test -race ./...`. See [e2e coverage](e2e/README.md)
-for the exercised protocol cases and current boundaries.
+Run `mise run test` for all checks or `mise run e2e` to build Gate and run BDD
+scenarios. CLI checks use ordinary Go tests in `main_test.go`; run them with
+`mise run cli-test`. See [e2e coverage](e2e/README.md)
+for executable behavior definitions, and [ACP package tests](internal/acp/v1/README.md)
+for protocol boundary coverage.
 
 Development tools and protobuf generation are pinned in `mise.toml`.
 Run `mise install`, then `mise run proto-generate` to regenerate bindings or
